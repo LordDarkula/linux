@@ -3994,6 +3994,40 @@ static unsigned long mem_cgroup_node_nr_lru_pages(struct mem_cgroup *memcg,
 	return nr;
 }
 
+bool memcg_node_allowed(int node, unsigned int order)
+{
+	struct mem_cgroup *memcg;
+	struct mem_cgroup_per_node *pn;
+	unsigned long max, current_pages;
+
+	memcg = mem_cgroup_from_task(current);
+	if (!memcg)
+		return true;
+
+	pn = memcg->nodeinfo[node];
+	if (!pn)
+		return true;
+
+	max = READ_ONCE(pn->max);
+	if (max == PAGE_COUNTER_MAX)
+		return true;
+
+	current_pages = page_counter_read(&pn->memory);
+
+	// todo (matteo olivi): if the following branch is taken, drain the per-CPU stocks for this
+	// cgroup. Otherwise, the stock pages are stranded. I didn't do that because in the machines
+	// where I was running my experiments the largest possible stock for a cgroup (cumulatively over
+	// all CPUs) is 32 MiB => the amount of waste is negligible. But in production we'd want to
+	// avoid that.
+	if (current_pages >= max)
+		return false;
+
+	//! I wonder what happens if the node can allocate some, but not all pages.
+	// Is some allocation further down the line going to take care of splitting blocks (is it
+	// even correct to split them??).
+	return (max - current_pages) >= (1 << order);
+}
+
 static unsigned long mem_cgroup_nr_lru_pages(struct mem_cgroup *memcg,
 					     unsigned int lru_mask,
 					     bool tree)
@@ -5272,6 +5306,9 @@ static int alloc_mem_cgroup_per_node_info(struct mem_cgroup *memcg, int node)
 
 	lruvec_init(&pn->lruvec);
 	pn->memcg = memcg;
+
+	pn->max = PAGE_COUNTER_MAX;
+	page_counter_init(&pn->memory, NULL);
 
 	memcg->nodeinfo[node] = pn;
 	return 0;
@@ -6705,6 +6742,53 @@ static int memory_numa_stat_show(struct seq_file *m, void *v)
 
 	return 0;
 }
+
+static int memory_max_per_node_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+	unsigned long max;
+	int nid;
+
+	for_each_node(nid) {
+		max = READ_ONCE(memcg->nodeinfo[nid]->max);
+		if (max == PAGE_COUNTER_MAX) {
+			seq_printf(m, "%d max\n", nid);
+		} else {
+			seq_printf(m, "%d %llu\n", nid, (u64)max * PAGE_SIZE);
+		}
+	}
+
+	return 0;
+}
+
+static ssize_t memory_max_per_node_write(struct kernfs_open_file *of,
+				char *buf, size_t nbytes, loff_t off)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
+	struct mem_cgroup_per_node *node_info;
+	char *node_id_str;
+	unsigned long max;
+	int node_id, err;
+
+	buf = strstrip(buf);
+	node_id_str = strsep(&buf, " ");
+
+	if (!node_id_str || !buf || kstrtoint(node_id_str, 10, &node_id))
+		return -EINVAL;
+
+	if (node_id < 0 || node_id >= num_possible_nodes())
+		return -EINVAL;
+
+	err = page_counter_memparse(buf, "max", &max);
+	if (err)
+		return err;
+
+	node_info = memcg->nodeinfo[node_id];
+
+	xchg(&node_info->max, max);
+
+	return nbytes;
+}
 #endif
 
 static int memory_oom_group_show(struct seq_file *m, void *v)
@@ -6835,6 +6919,12 @@ static struct cftype memory_files[] = {
 	{
 		.name = "numa_stat",
 		.seq_show = memory_numa_stat_show,
+	},
+	{
+		.name = "max_per_node",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = memory_max_per_node_show,
+		.write = memory_max_per_node_write,
 	},
 #endif
 	{
@@ -7042,8 +7132,9 @@ void mem_cgroup_calculate_protection(struct mem_cgroup *root,
 static int charge_memcg(struct folio *folio, struct mem_cgroup *memcg,
 			gfp_t gfp)
 {
+	struct mem_cgroup_per_node *pn;
 	long nr_pages = folio_nr_pages(folio);
-	int ret;
+	int nid, ret;
 
 	ret = try_charge(memcg, gfp, nr_pages);
 	if (ret)
@@ -7051,6 +7142,11 @@ static int charge_memcg(struct folio *folio, struct mem_cgroup *memcg,
 
 	css_get(&memcg->css);
 	commit_charge(folio, memcg);
+
+	nid = folio_nid(folio);
+	pn = memcg->nodeinfo[nid];
+	if (pn)
+		page_counter_charge(&pn->memory, nr_pages);
 
 	local_irq_disable();
 	mem_cgroup_charge_statistics(memcg, nr_pages);
@@ -7155,10 +7251,16 @@ static inline void uncharge_gather_clear(struct uncharge_gather *ug)
 
 static void uncharge_batch(const struct uncharge_gather *ug)
 {
+	struct mem_cgroup_per_node *pn;
 	unsigned long flags;
 
 	if (ug->nr_memory) {
 		page_counter_uncharge(&ug->memcg->memory, ug->nr_memory);
+
+		pn = ug->memcg->nodeinfo[ug->nid];
+		if (pn)
+			page_counter_uncharge(&pn->memory, ug->nr_memory);
+
 		if (do_memsw_account())
 			page_counter_uncharge(&ug->memcg->memsw, ug->nr_memory);
 		if (ug->nr_kmem)

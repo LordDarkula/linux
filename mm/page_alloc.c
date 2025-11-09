@@ -3074,6 +3074,7 @@ get_page_from_freelist(gfp_t gfp_mask, unsigned int order, int alloc_flags,
 	struct pglist_data *last_pgdat = NULL;
 	bool last_pgdat_dirty_ok = false;
 	bool no_fallback;
+	int r;
 
 retry:
 	/*
@@ -3087,10 +3088,15 @@ retry:
 		struct page *page;
 		unsigned long mark;
 
-		if (cpusets_enabled() &&
-			(alloc_flags & ALLOC_CPUSET) &&
-			!__cpuset_zone_allowed(zone, gfp_mask))
+		if (cpusets_enabled() && (alloc_flags & ALLOC_CPUSET)) {
+			r = __cpuset_zone_allowed_part_1(zone);
+			if (r == 1 || (r == 2 && __memcg_zone_allowed(zone, order)))
+				goto try_this_node;
+			if (!__cpuset_zone_allowed_part_2(zone, gfp_mask))
 				continue;
+		}
+
+try_this_node:
 		/*
 		 * When allocating a page cache page for writing, we
 		 * want to get it from a node that is within its dirty
@@ -4207,6 +4213,9 @@ static inline bool prepare_alloc_pages(gfp_t gfp_mask, unsigned int order,
 		struct alloc_context *ac, gfp_t *alloc_gfp,
 		unsigned int *alloc_flags)
 {
+	nodemask_t tmp_nodemask;
+	int nid;
+
 	ac->highest_zoneidx = gfp_zone(gfp_mask);
 	ac->zonelist = node_zonelist(preferred_nid, gfp_mask);
 	ac->nodemask = nodemask;
@@ -4218,10 +4227,16 @@ static inline bool prepare_alloc_pages(gfp_t gfp_mask, unsigned int order,
 		 * When we are in the interrupt context, it is irrelevant
 		 * to the current task context. It means that any node ok.
 		 */
-		if (in_task() && !ac->nodemask)
-			ac->nodemask = &cpuset_current_mems_allowed;
-		else
+		if (in_task() && !ac->nodemask) {
+			tmp_nodemask = NODE_MASK_NONE;
+			for_each_node_mask(nid, cpuset_current_mems_allowed) {
+				if (__memcg_node_allowed(nid, order))
+					node_set(nid, tmp_nodemask);
+			}
+			ac->nodemask = &tmp_nodemask;
+		} else {
 			*alloc_flags |= ALLOC_CPUSET;
+		}
 	}
 
 	might_alloc(gfp_mask);

@@ -4147,6 +4147,45 @@ bool cpuset_node_allowed(int node, gfp_t gfp_mask)
 	return allowed;
 }
 
+int cpuset_node_allowed_part_1(int node)
+{
+	if (in_interrupt())
+		return 1;
+	if (node_isset(node, current->mems_allowed))
+		return 2;
+	return 0;
+}
+
+bool cpuset_node_allowed_part_2(int node, gfp_t gfp_mask)
+{
+	struct cpuset *cs;
+	bool allowed;
+	unsigned long flags;
+
+	/*
+	 * Allow tasks that have access to memory reserves because they have
+	 * been OOM killed to get memory anywhere.
+	 */
+	if (unlikely(tsk_is_oom_victim(current)))
+		return true;
+	if (gfp_mask & __GFP_HARDWALL)	/* If hardwall request, stop here */
+		return false;
+
+	if (current->flags & PF_EXITING) /* Let dying task have memory */
+		return true;
+
+	/* Not hardwall and node outside mems_allowed: scan up cpusets */
+	spin_lock_irqsave(&callback_lock, flags);
+
+	rcu_read_lock();
+	cs = nearest_hardwall_ancestor(task_cs(current));
+	allowed = node_isset(node, cs->mems_allowed);
+	rcu_read_unlock();
+
+	spin_unlock_irqrestore(&callback_lock, flags);
+	return allowed;
+}
+
 /**
  * cpuset_spread_node() - On which node to begin search for a page
  * @rotor: round robin rotor
