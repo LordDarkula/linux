@@ -4543,6 +4543,7 @@ DEFINE_STATIC_KEY_FALSE(sched_numa_balancing);
 #ifdef CONFIG_NUMA_BALANCING
 
 int sysctl_numa_balancing_mode;
+unsigned int sysctl_numa_balancing_migrate_probability = 100;
 
 static void __set_numabalancing_state(bool enabled)
 {
@@ -4709,6 +4710,15 @@ static struct ctl_table sched_core_sysctls[] = {
 		.proc_handler	= sysctl_numa_balancing,
 		.extra1		= SYSCTL_ZERO,
 		.extra2		= SYSCTL_FOUR,
+	},
+	{
+		.procname	= "numa_balancing_migrate_probability",
+		.data		= &sysctl_numa_balancing_migrate_probability,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_douintvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE_HUNDRED,
 	},
 #endif /* CONFIG_NUMA_BALANCING */
 	{}

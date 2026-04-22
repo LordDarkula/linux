@@ -662,6 +662,21 @@ different types of memory (represented as different NUMA nodes) to
 place the hot pages in the fast memory.  This is implemented based on
 unmapping and page fault too.
 
+numa_balancing_migrate_probability
+==================================
+
+Controls the probability, as a percentage from 0 to 100, that
+automatic NUMA balancing will migrate a page after the normal
+placement heuristics decide that the page should move.
+
+0 disables NUMA-triggered page migrations while leaving NUMA balancing
+scanning and hinting faults enabled.  100 preserves the default
+behavior and migrates whenever the existing heuristics allow it.
+
+Intermediate values probabilistically thin out migrations.  For
+example, a value of 25 allows about one in four candidate migrations
+to proceed.
+
 numa_balancing_promote_rate_limit_MBps
 ======================================
 

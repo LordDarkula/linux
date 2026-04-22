@@ -25,8 +25,10 @@ enum sched_tunable_scaling {
 
 #ifdef CONFIG_NUMA_BALANCING
 extern int sysctl_numa_balancing_mode;
+extern unsigned int sysctl_numa_balancing_migrate_probability;
 #else
 #define sysctl_numa_balancing_mode	0
+#define sysctl_numa_balancing_migrate_probability	100
 #endif
 
 #endif /* _LINUX_SCHED_SYSCTL_H */
