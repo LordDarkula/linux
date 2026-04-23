@@ -46,6 +46,7 @@
 #include <linux/profile.h>
 #include <linux/psi.h>
 #include <linux/ratelimit.h>
+#include <linux/random.h>
 #include <linux/task_work.h>
 
 #include <asm/switch_to.h>
@@ -1614,6 +1615,11 @@ bool should_numa_migrate_memory(struct task_struct *p, struct page * page,
 		th = pgdat->nbp_threshold ? : def_th;
 		latency = numa_hint_fault_latency(page);
 		if (latency >= th)
+			return false;
+
+		if (sysctl_numa_balancing_migrate_probability < 100 &&
+		    get_random_u32_below(100) >=
+		    sysctl_numa_balancing_migrate_probability)
 			return false;
 
 		return !numa_promotion_rate_limit(pgdat, rate_limit,

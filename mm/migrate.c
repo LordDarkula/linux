@@ -2533,11 +2533,19 @@ int migrate_misplaced_page(struct page *page, struct vm_area_struct *vma,
 	unsigned int nr_succeeded;
 	LIST_HEAD(migratepages);
 	int nr_pages = thp_nr_pages(page);
+	bool tiering_promotion;
 
-	if (!sysctl_numa_balancing_migrate_probability)
+	tiering_promotion = (sysctl_numa_balancing_mode &
+			     NUMA_BALANCING_MEMORY_TIERING) &&
+			    !node_is_toptier(page_to_nid(page)) &&
+			    node_is_toptier(node);
+
+	if (!tiering_promotion &&
+	    !sysctl_numa_balancing_migrate_probability)
 		goto out_skip;
 
-	if (sysctl_numa_balancing_migrate_probability < 100 &&
+	if (!tiering_promotion &&
+	    sysctl_numa_balancing_migrate_probability < 100 &&
 	    get_random_u32_below(100) >=
 	    sysctl_numa_balancing_migrate_probability)
 		goto out_skip;
