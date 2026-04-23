@@ -1546,11 +1546,18 @@ vm_fault_t do_huge_pmd_numa_page(struct vm_fault *vmf)
 	writable = false;
 
 	migrated = migrate_misplaced_page(page, vma, target_nid);
-	if (migrated) {
+	if (migrated > 0) {
 		flags |= TNF_MIGRATED;
 		page_nid = target_nid;
-	} else {
+	} else if (!migrated) {
 		flags |= TNF_MIGRATE_FAIL;
+		vmf->ptl = pmd_lock(vma->vm_mm, vmf->pmd);
+		if (unlikely(!pmd_same(oldpmd, *vmf->pmd))) {
+			spin_unlock(vmf->ptl);
+			goto out;
+		}
+		goto out_map;
+	} else {
 		vmf->ptl = pmd_lock(vma->vm_mm, vmf->pmd);
 		if (unlikely(!pmd_same(oldpmd, *vmf->pmd))) {
 			spin_unlock(vmf->ptl);

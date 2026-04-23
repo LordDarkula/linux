@@ -4705,6 +4705,7 @@ static vm_fault_t do_numa_page(struct vm_fault *vmf)
 	int page_nid = NUMA_NO_NODE;
 	bool writable = false;
 	int last_cpupid;
+	int migrated;
 	int target_nid;
 	pte_t pte, old_pte;
 	int flags = 0;
@@ -4779,11 +4780,22 @@ static vm_fault_t do_numa_page(struct vm_fault *vmf)
 	writable = false;
 
 	/* Migrate to the requested node */
-	if (migrate_misplaced_page(page, vma, target_nid)) {
+	migrated = migrate_misplaced_page(page, vma, target_nid);
+	if (migrated > 0) {
 		page_nid = target_nid;
 		flags |= TNF_MIGRATED;
-	} else {
+	} else if (!migrated) {
 		flags |= TNF_MIGRATE_FAIL;
+		vmf->pte = pte_offset_map_lock(vma->vm_mm, vmf->pmd,
+					       vmf->address, &vmf->ptl);
+		if (unlikely(!vmf->pte))
+			goto out;
+		if (unlikely(!pte_same(ptep_get(vmf->pte), vmf->orig_pte))) {
+			pte_unmap_unlock(vmf->pte, vmf->ptl);
+			goto out;
+		}
+		goto out_map;
+	} else {
 		vmf->pte = pte_offset_map_lock(vma->vm_mm, vmf->pmd,
 					       vmf->address, &vmf->ptl);
 		if (unlikely(!vmf->pte))

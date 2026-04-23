@@ -2535,12 +2535,12 @@ int migrate_misplaced_page(struct page *page, struct vm_area_struct *vma,
 	int nr_pages = thp_nr_pages(page);
 
 	if (!sysctl_numa_balancing_migrate_probability)
-		goto out;
+		goto out_skip;
 
 	if (sysctl_numa_balancing_migrate_probability < 100 &&
 	    get_random_u32_below(100) >=
 	    sysctl_numa_balancing_migrate_probability)
-		goto out;
+		goto out_skip;
 
 	/*
 	 * Don't migrate file pages that are mapped in multiple processes
@@ -2586,6 +2586,9 @@ int migrate_misplaced_page(struct page *page, struct vm_area_struct *vma,
 out:
 	put_page(page);
 	return 0;
+out_skip:
+	put_page(page);
+	return -EAGAIN;
 }
 #endif /* CONFIG_NUMA_BALANCING */
 #endif /* CONFIG_NUMA */
