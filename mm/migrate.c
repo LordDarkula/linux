@@ -2534,6 +2534,14 @@ int migrate_misplaced_page(struct page *page, struct vm_area_struct *vma,
 	LIST_HEAD(migratepages);
 	int nr_pages = thp_nr_pages(page);
 
+	if (!sysctl_numa_balancing_migrate_probability)
+		goto out;
+
+	if (sysctl_numa_balancing_migrate_probability < 100 &&
+	    get_random_u32_below(100) >=
+	    sysctl_numa_balancing_migrate_probability)
+		goto out;
+
 	/*
 	 * Don't migrate file pages that are mapped in multiple processes
 	 * with execute permissions as they are probably shared libraries.
